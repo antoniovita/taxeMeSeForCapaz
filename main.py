@@ -2,257 +2,415 @@ import pygame
 import os
 import sys
 import random
+import math
 
 pygame.init()
 
+# Configurações da tela
 LARGURA, ALTURA = 800, 400
 TELA = pygame.display.set_mode((LARGURA, ALTURA))
-pygame.display.set_caption("Cenário Rolando com Pulo, Nuvens e Imposto")
+pygame.display.set_caption("Taxe Me Se For Capaz")
 
+# Cores
 LARANJA = (255, 165, 0)
 PRETO = (0, 0, 0)
 BRANCO = (255, 255, 255)
 CINZA = (200, 200, 200)
 AZUL = (0, 120, 215)
+VERDE = (0, 255, 0)
+VERMELHO = (255, 0, 0)
 
-# Fundo
-fundo_chao = pygame.image.load("Plan 1.png").convert_alpha()
-fundo_chao = pygame.transform.scale(fundo_chao, (LARGURA, 400))
+# Estados do jogo
+MENU = 0
+JOGANDO = 1
+GAME_OVER = 2
 
-# Nuvens
-nuvem_img = pygame.image.load("cloud.png").convert_alpha()
-nuvem_img = pygame.transform.scale(nuvem_img, (200, 100))
+class ImageLoader:
+    @staticmethod
+    def load_or_create(path, size, fallback_color=(255, 255, 255)):
+        try:
+            img = pygame.image.load(path).convert_alpha()
+            return pygame.transform.scale(img, size)
+        except:
+            surface = pygame.Surface(size, pygame.SRCALPHA)
+            surface.fill(fallback_color)
+            return surface
 
-# Imagens de "impostos"
-imposto_img = pygame.image.load("imposto.png").convert_alpha()
-imposto_img = pygame.transform.scale(imposto_img, (30, 30))
+class GameAssets:
+    def __init__(self):
+        self.load_assets()
 
-# Posições e velocidades iniciais das nuvens
-nuvem1_x, nuvem1_y = LARGURA + 100, 50
-nuvem2_x, nuvem2_y = LARGURA + 400, 100
-velocidade_nuvem1, velocidade_nuvem2 = 2, 1
+    def load_assets(self):
+        self.fundo_chao = ImageLoader.load_or_create("Plan 1.png", (LARGURA, 400), CINZA)
+        self.nuvem_img = ImageLoader.load_or_create("cloud.png", (200, 100), BRANCO)
+        self.imposto_img = ImageLoader.load_or_create("imposto.png", (30, 30), VERMELHO)
 
-# Sprites do personagem
-sprite_folder = "running_frames"
-sprites = [pygame.image.load(os.path.join(sprite_folder, f"frame_{i}.png")) for i in range(10)]
-sprites = [pygame.transform.scale(sprite, (100, 100)) for sprite in sprites]
-sprites_left = [pygame.transform.flip(sprite, True, False) for sprite in sprites]
+        self.sprites = []
+        self.sprites_left = []
+        sprite_folder = "running_frames"
+        for i in range(10):
+            sprite = ImageLoader.load_or_create(f"{sprite_folder}/frame_{i}.png", (100, 100), VERDE)
+            self.sprites.append(sprite)
+            self.sprites_left.append(pygame.transform.flip(sprite, True, False))
 
-# Sprite parado (imagem estática)
-sprite_parado = pygame.image.load(os.path.join(sprite_folder, "parado.png")).convert_alpha()
-sprite_parado = pygame.transform.scale(sprite_parado, (100, 100))
-sprite_parado_left = pygame.transform.flip(sprite_parado, True, False)
+        self.sprite_parado = ImageLoader.load_or_create(f"{sprite_folder}/parado.png", (100, 100), VERDE)
+        self.sprite_parado_left = pygame.transform.flip(self.sprite_parado, True, False)
 
-# Sprites do vilão
-vilao_folder = "enemy_frames"
-vilao_sprites = [pygame.image.load(os.path.join(vilao_folder, f"frame_{i}.png")) for i in range(10)]
-vilao_sprites = [pygame.transform.scale(sprite, (100, 100)) for sprite in vilao_sprites]
-vilao_sprites_left = [pygame.transform.flip(sprite, True, False) for sprite in vilao_sprites]
+        self.attack_sprites = []
+        self.attack_sprites_left = []
+        attack_folder = "attack_frames"
+        for i in range(1, 6):
+            sprite = ImageLoader.load_or_create(f"{attack_folder}/frame_{i}.png", (100, 100), AZUL)
+            self.attack_sprites.append(sprite)
+            self.attack_sprites_left.append(pygame.transform.flip(sprite, True, False))
 
-# Função para criar um novo "imposto" no chão
-def criar_imposto():
-    x = random.randint(LARGURA + 100, LARGURA + 500)
-    y = ALTURA - 30
-    return [x, y]
+        self.vilao_sprites = []
+        self.vilao_sprites_left = []
+        vilao_folder = "enemy_frames"
+        for i in range(10):
+            sprite = ImageLoader.load_or_create(f"{vilao_folder}/frame_{i}.png", (100, 100), VERMELHO)
+            self.vilao_sprites.append(sprite)
+            self.vilao_sprites_left.append(pygame.transform.flip(sprite, True, False))
 
-# Verifica colisão entre retângulos
-def verificar_colisao(personagem_rect, obstaculo_rect):
-    return personagem_rect.colliderect(obstaculo_rect)
+        self.hurt_sprites = []
+        self.hurt_sprites_left = []
+        hurt_folder = "hurt_enemy_frames"
+        for i in range(1, 4):
+            sprite = ImageLoader.load_or_create(f"{hurt_folder}/frame2_{i}.png", (100, 100), (255, 100, 100))
+            self.hurt_sprites.append(sprite)
+            self.hurt_sprites_left.append(pygame.transform.flip(sprite, True, False))
 
-def desenhar_botao(texto, retangulo, cor_fundo, cor_texto):
-    pygame.draw.rect(TELA, cor_fundo, retangulo)
-    fonte_botao = pygame.font.SysFont(None, 40)
-    texto_render = fonte_botao.render(texto, True, cor_texto)
-    texto_rect = texto_render.get_rect(center=retangulo.center)
-    TELA.blit(texto_render, texto_rect)
+        self.moeda_img = ImageLoader.load_or_create("moeda.png", (30, 30), (255, 215, 0))
 
-# Lista de impostos ativos
-impostos = []
+class Personagem:
+    def __init__(self, assets):
+        self.assets = assets
+        self.x = 100
+        self.y = ALTURA - 100
+        self.vel_y = 0
+        self.pulando = False
+        self.direcao = "right"
+        self.indice_sprite = 0
+        self.atacando = False
+        self.indice_ataque = 0
+        self.tempo_ataque = 0
+        self.gravidade = 1.5
+        self.forca_pulo = -20
 
-# Inicialização / reinício do jogo
-def reiniciar_jogo():
-    global personagem_x, y, pulando, vel_y, fundo_x, indice_sprite, direcao
-    global vilao_x, vilao_y, indice_vilao, velocidade_vilao, direcao_vilao, vilao_ativo
-    global velocidade_imposto, impostos, tempo_inicial, tempo_ultimo_aumento, velocidade_fundo
+    def pular(self):
+        if not self.pulando:
+            self.pulando = True
+            self.vel_y = self.forca_pulo
 
-    personagem_x = 100
-    y = ALTURA - 100
-    pulando = False
-    vel_y = 0
-    fundo_x = 0
-    indice_sprite = 0
-    direcao = "right"
+    def atacar(self):
+        if not self.atacando:
+            self.atacando = True
+            self.indice_ataque = 0
+            self.tempo_ataque = pygame.time.get_ticks()
 
-    vilao_x = LARGURA
-    vilao_y = ALTURA - 100
-    indice_vilao = 0
-    velocidade_vilao = 1
-    direcao_vilao = "left"
-    vilao_ativo = False
-
-    velocidade_imposto = 5
-
-    impostos.clear()
-    impostos.append(criar_imposto())
-
-    tempo_inicial = pygame.time.get_ticks()
-    tempo_ultimo_aumento = tempo_inicial
-    velocidade_fundo = 6
-
-# Configuração do clock
-clock = pygame.time.Clock()
-reiniciar_jogo()
-
-rodando = True
-game_over = False
-
-while rodando:
-    clock.tick(30)
-    TELA.fill(LARANJA)
-
-    for evento in pygame.event.get():
-        if evento.type == pygame.QUIT:
-            rodando = False
-
-        if not game_over:
-            if evento.type == pygame.KEYDOWN:
-                if evento.key == pygame.K_SPACE and not pulando:
-                    pulando = True
-                    vel_y = -20
-        else:
-            if evento.type == pygame.MOUSEBUTTONDOWN and evento.button == 1:
-                mouse_pos = evento.pos
-                botao_rect = pygame.Rect(LARGURA // 2 - 100, ALTURA // 2 + 40, 200, 50)
-                if botao_rect.collidepoint(mouse_pos):
-                    reiniciar_jogo()
-                    game_over = False
-
-    if not game_over:
-        # Atualiza posição das nuvens
-        nuvem1_x -= velocidade_nuvem1
-        nuvem2_x -= velocidade_nuvem2
-        if nuvem1_x < -nuvem_img.get_width():
-            nuvem1_x = LARGURA + 100
-        if nuvem2_x < -nuvem_img.get_width():
-            nuvem2_x = LARGURA + 400
-
-        # Movimento e animação do personagem
-        teclas = pygame.key.get_pressed()
+    def update(self, teclas, tempo_atual):
         movendo = False
         if teclas[pygame.K_RIGHT]:
-            fundo_x -= velocidade_fundo
-            direcao = "right"
+            self.direcao = "right"
             movendo = True
         elif teclas[pygame.K_LEFT]:
-            # só permite mover para trás se não estiver no limite esquerdo
-            if fundo_x < 0:
-                fundo_x += velocidade_fundo
-                direcao = "left"
-                movendo = True
+            self.direcao = "left"
+            movendo = True
 
-        # Loop contínuo do fundo
-        if fundo_x <= -LARGURA or fundo_x >= LARGURA:
-            fundo_x = 0
+        if movendo and not self.atacando:
+            if tempo_atual % 3 == 0:
+                self.indice_sprite = (self.indice_sprite + 1) % len(self.assets.sprites)
 
-        # Atualiza frame de corrida ao mover
-        if movendo:
-            indice_sprite = (indice_sprite + 1) % len(sprites)
+        if self.pulando:
+            self.y += self.vel_y
+            self.vel_y += self.gravidade
+            if self.y >= ALTURA - 100:
+                self.y = ALTURA - 100
+                self.pulando = False
+                self.vel_y = 0
 
-        # Controle do pulo
-        if pulando:
-            y += vel_y
-            vel_y += 1.5
-            if y >= ALTURA - 100:
-                y = ALTURA - 100
-                pulando = False
+        if self.atacando and tempo_atual - self.tempo_ataque > 600:
+            self.atacando = False
 
-        # Controle de tempo
-        tempo_atual = pygame.time.get_ticks()
-        tempo_decorrido = (tempo_atual - tempo_inicial) // 1000
+    def get_rect(self):
+        return pygame.Rect(self.x + 20, self.y + 20, 60, 80)
 
-        # Ativa vilão após 20 segundos
-        if tempo_decorrido >= 20:
-            vilao_ativo = True
-
-        # Aumenta dificuldade a cada 10 segundos
-        if tempo_atual - tempo_ultimo_aumento > 10000:
-            tempo_ultimo_aumento = tempo_atual
-            velocidade_imposto += 0.5
-            velocidade_vilao += 0.5
-            if len(impostos) < 5:
-                novo_imposto = criar_imposto()
-                if all(abs(imp[0] - novo_imposto[0]) >= 150 for imp in impostos):
-                    impostos.append(novo_imposto)
-
-        # Atualiza posição dos impostos
-        for i in range(len(impostos)):
-            impostos[i][0] -= velocidade_imposto
-            if impostos[i][0] < -30:
-                pos_valida = False
-                while not pos_valida:
-                    novo_x = random.randint(LARGURA + 100, LARGURA + 500)
-                    pos_valida = all(abs(imp[0] - novo_x) >= 150 for j, imp in enumerate(impostos) if j != i)
-                impostos[i][0] = novo_x
-
-        # Lógica de movimento do vilão
-        if vilao_ativo:
-            if vilao_x > personagem_x:
-                vilao_x -= velocidade_vilao
-                direcao_vilao = "left"
-            elif vilao_x < personagem_x:
-                vilao_x += velocidade_vilao
-                direcao_vilao = "right"
-            indice_vilao = (indice_vilao + 1) % len(vilao_sprites)
-            vilao_sprite = vilao_sprites[indice_vilao] if direcao_vilao == "right" else vilao_sprites_left[indice_vilao]
+    def draw(self, tela, tempo_atual):
+        if self.atacando:
+            sprite_lista = self.assets.attack_sprites if self.direcao == "right" else self.assets.attack_sprites_left
+            sprite_atual = sprite_lista[self.indice_ataque // 4 % len(sprite_lista)]
+            self.indice_ataque += 1
+        elif self.pulando:
+            sprite_atual = self.assets.sprites[0] if self.direcao == "right" else self.assets.sprites_left[0]
+        elif pygame.key.get_pressed()[pygame.K_RIGHT] or pygame.key.get_pressed()[pygame.K_LEFT]:
+            sprite_atual = self.assets.sprites[self.indice_sprite] if self.direcao == "right" else self.assets.sprites_left[self.indice_sprite]
         else:
-            vilao_sprite = None
+            sprite_atual = self.assets.sprite_parado if self.direcao == "right" else self.assets.sprite_parado_left
 
-        # Retângulos para colisão
-        personagem_rect = pygame.Rect(personagem_x + 20, y + 20, 60, 80)
-        for imposto in impostos:
-            imposto_rect = pygame.Rect(imposto[0], imposto[1], 30, 30)
-            if verificar_colisao(personagem_rect, imposto_rect):
-                game_over = True
+        tela.blit(sprite_atual, (self.x, self.y))
 
-        if vilao_ativo and vilao_sprite:
-            vilao_rect = pygame.Rect(vilao_x + 20, vilao_y + 20, 60, 80)
-            if verificar_colisao(personagem_rect, vilao_rect):
-                game_over = True
+class Vilao:
+    def __init__(self, assets, spawn_x):
+        self.assets = assets
+        self.x = spawn_x
+        self.y = ALTURA - 100
+        self.velocidade = 3.5
+        self.direcao = "left"
+        self.indice_sprite = 0
+        self.ativo = True
+        self.contador_animacao = 0
 
-        # Desenho do cenário completo
-        TELA.blit(fundo_chao, (fundo_x, 0))
-        TELA.blit(fundo_chao, (fundo_x + LARGURA, 0))
-        TELA.blit(nuvem_img, (nuvem1_x, nuvem1_y))
-        TELA.blit(nuvem_img, (nuvem2_x, nuvem2_y))
+    def update(self, personagem_x, tempo_atual):
+        if not self.ativo:
+            return
 
-        for imposto in impostos:
-            TELA.blit(imposto_img, (imposto[0], imposto[1]))
+        if self.x > personagem_x:
+            self.x -= self.velocidade
+            self.direcao = "left"
+        elif self.x < personagem_x:
+            self.x += self.velocidade
+            self.direcao = "right"
 
-        # Seleciona o sprite correto: parado, correndo ou pulando
-        if pulando or movendo:
-            sprite_atual = sprites[indice_sprite] if direcao == "right" else sprites_left[indice_sprite]
-        else:
-            sprite_atual = sprite_parado if direcao == "right" else sprite_parado_left
+        self.contador_animacao += 3
+        if self.contador_animacao >= 8:
+            self.indice_sprite = (self.indice_sprite + 1) % len(self.assets.vilao_sprites)
+            self.contador_animacao = 0
 
-        TELA.blit(sprite_atual, (personagem_x, y))
+    def ser_atacado(self):
+        self.ativo = False
+        return True
 
-        if vilao_ativo and vilao_sprite:
-            TELA.blit(vilao_sprite, (vilao_x, vilao_y))
+    def get_rect(self):
+        if self.ativo:
+            return pygame.Rect(self.x + 20, self.y + 20, 60, 80)
+        return pygame.Rect(0, 0, 0, 0)
 
-        # Texto do tempo
-        fonte_tempo = pygame.font.SysFont(None, 30)
-        texto_tempo = fonte_tempo.render(f"Tempo: {tempo_decorrido}s", True, PRETO)
-        TELA.blit(texto_tempo, (10, 10))
+    def draw(self, tela):
+        if not self.ativo:
+            return
+        sprite_lista = self.assets.vilao_sprites if self.direcao == "right" else self.assets.vilao_sprites_left
+        sprite_atual = sprite_lista[self.indice_sprite]
+        tela.blit(sprite_atual, (self.x, self.y))
 
-    else:
-        # Tela de Game Over e botão de reinício
-        fonte = pygame.font.SysFont(None, 60)
-        texto = fonte.render("GAME OVER", True, PRETO)
-        TELA.blit(texto, (LARGURA // 2 - texto.get_width() // 2, ALTURA // 2 - 80))
-        botao_rect = pygame.Rect(LARGURA // 2 - 100, ALTURA // 2 + 40, 200, 50)
-        desenhar_botao("Reiniciar", botao_rect, AZUL, BRANCO)
+class Imposto:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.velocidade = 5
 
-    pygame.display.update()
+    def update(self):
+        self.x -= self.velocidade
 
-pygame.quit()
-sys.exit()
+    def get_rect(self):
+        return pygame.Rect(self.x, self.y, 30, 30)
+
+    def draw(self, tela, img):
+        tela.blit(img, (self.x, self.y))
+
+class Moeda:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.velocidade = 5
+
+    def update(self):
+        self.x -= self.velocidade
+
+    def get_rect(self):
+        return pygame.Rect(self.x, self.y, 30, 30)
+
+    def draw(self, tela, img):
+        tela.blit(img, (self.x, self.y))
+
+class Nuvem:
+    def __init__(self, x, y, velocidade):
+        self.x = x
+        self.y = y
+        self.velocidade = velocidade
+
+    def update(self):
+        self.x -= self.velocidade
+        if self.x < -200:
+            self.x = LARGURA + random.randint(200, 400)
+
+    def draw(self, tela, img):
+        tela.blit(img, (self.x, self.y))
+
+class Game:
+    def __init__(self):
+        self.assets = GameAssets()
+        self.estado = MENU
+        self.nuvens = [Nuvem(random.randint(0, LARGURA), random.randint(0, 100), random.uniform(0.5, 1.5)) for _ in range(5)]
+        self.reset_game()
+
+    def reset_game(self):
+        self.personagem = Personagem(self.assets)
+        self.viloes = []
+        self.impostos = []
+        self.moedas = []
+        self.moedas_count = 0
+        self.fundo_x = 0
+        self.velocidade_fundo = 4
+        self.tempo_inicial = pygame.time.get_ticks()
+        self.tempo_ultimo_aumento = self.tempo_inicial
+        self.proximo_spawn_vilao = pygame.time.get_ticks() + 5000
+        self.proximo_spawn_imposto = pygame.time.get_ticks() + 3000
+        self.proximo_spawn_moeda = pygame.time.get_ticks() + random.randint(4000, 8000)
+        self.pontuacao = 0
+        self.nivel_dificuldade = 1
+
+    def spawn_vilao(self):
+        if pygame.time.get_ticks() >= self.proximo_spawn_vilao:
+            self.viloes.append(Vilao(self.assets, LARGURA + random.randint(50, 200)))
+            self.proximo_spawn_vilao = pygame.time.get_ticks() + random.randint(5000, 10000)
+
+    def spawn_imposto(self):
+        if pygame.time.get_ticks() >= self.proximo_spawn_imposto:
+            self.impostos.append(Imposto(LARGURA + random.randint(100, 300), ALTURA - 30))
+            self.proximo_spawn_imposto = pygame.time.get_ticks() + random.randint(3000, 6000)
+
+    def spawn_moeda(self):
+        if pygame.time.get_ticks() >= self.proximo_spawn_moeda:
+            self.moedas.append(Moeda(LARGURA + random.randint(100, 300), ALTURA - 60))
+            self.proximo_spawn_moeda = pygame.time.get_ticks() + random.randint(4000, 8000)
+
+    def verificar_colisoes(self):
+        personagem_rect = self.personagem.get_rect()
+        for imposto in self.impostos[:]:
+            if personagem_rect.colliderect(imposto.get_rect()):
+                self.estado = GAME_OVER
+                return
+        for vilao in self.viloes[:]:
+            if vilao.ativo and personagem_rect.colliderect(vilao.get_rect()):
+                self.estado = GAME_OVER
+                return
+        if self.personagem.atacando:
+            for vilao in self.viloes[:]:
+                if vilao.ativo and abs(vilao.x - self.personagem.x) < 120:
+                    if vilao.ser_atacado():
+                        self.pontuacao += 100
+                        self.viloes.remove(vilao)
+        for moeda in self.moedas[:]:
+            if personagem_rect.colliderect(moeda.get_rect()):
+                self.moedas.remove(moeda)
+                self.moedas_count += 1
+
+    def update(self):
+        if self.estado != JOGANDO:
+            return
+        tempo = pygame.time.get_ticks()
+        teclas = pygame.key.get_pressed()
+        self.personagem.update(teclas, tempo)
+        if teclas[pygame.K_RIGHT]:
+            self.fundo_x -= self.velocidade_fundo
+        elif teclas[pygame.K_LEFT]:
+            self.fundo_x += self.velocidade_fundo
+        self.fundo_x %= LARGURA
+        self.spawn_vilao()
+        self.spawn_imposto()
+        self.spawn_moeda()
+        for nuvem in self.nuvens:
+            nuvem.update()
+        for vilao in self.viloes[:]:
+            vilao.update(self.personagem.x, tempo)
+            if vilao.x < -150:
+                self.viloes.remove(vilao)
+        for imposto in self.impostos[:]:
+            imposto.update()
+            if imposto.x < -50:
+                self.impostos.remove(imposto)
+        for moeda in self.moedas[:]:
+            moeda.update()
+            if moeda.x < -50:
+                self.moedas.remove(moeda)
+        self.verificar_colisoes()
+        if tempo - self.tempo_ultimo_aumento > 20000:
+            self.tempo_ultimo_aumento = tempo
+            self.nivel_dificuldade += 1
+            self.velocidade_fundo += 0.5
+        if tempo % 20 == 0:
+            self.pontuacao += 1
+
+    def draw_menu(self):
+        TELA.fill(LARANJA)
+        font = pygame.font.SysFont(None, 70, bold=True)
+        title = font.render("TAXE ME SE FOR CAPAZ", True, PRETO)
+        TELA.blit(title, title.get_rect(center=(LARGURA // 2, ALTURA // 2 - 100)))
+        font_small = pygame.font.SysFont(None, 28)
+        instrucoes = [
+            "Use as SETAS para mover",
+            "ESPAÇO para pular",
+            "A para atacar vilões",
+            "Evite os impostos vermelhos!",
+            "",
+            "Pressione ENTER para começar"
+        ]
+        for i, linha in enumerate(instrucoes):
+            txt = font_small.render(linha, True, PRETO)
+            TELA.blit(txt, txt.get_rect(center=(LARGURA // 2, ALTURA // 2 - 20 + i * 25)))
+
+    def draw_game(self):
+        TELA.fill(LARANJA)
+        TELA.blit(self.assets.fundo_chao, (self.fundo_x, 0))
+        TELA.blit(self.assets.fundo_chao, (self.fundo_x - LARGURA, 0))
+        for nuvem in self.nuvens:
+            nuvem.draw(TELA, self.assets.nuvem_img)
+        for imposto in self.impostos:
+            imposto.draw(TELA, self.assets.imposto_img)
+        for moeda in self.moedas:
+            moeda.draw(TELA, self.assets.moeda_img)
+        for vilao in self.viloes:
+            vilao.draw(TELA)
+        self.personagem.draw(TELA, pygame.time.get_ticks())
+        font = pygame.font.SysFont(None, 30)
+        tempo = (pygame.time.get_ticks() - self.tempo_inicial) // 1000
+        TELA.blit(font.render(f"Pontos: {self.pontuacao}", True, PRETO), (10, 10))
+        TELA.blit(font.render(f"Tempo: {tempo}s", True, PRETO), (10, 40))
+        TELA.blit(font.render(f"Nível: {self.nivel_dificuldade}", True, PRETO), (10, 70))
+        TELA.blit(font.render(f"Moedas: {self.moedas_count}", True, PRETO), (10, 100))
+
+    def draw_game_over(self):
+        TELA.fill(LARANJA)
+        font = pygame.font.SysFont(None, 80, bold=True)
+        go_text = font.render("GAME OVER", True, VERMELHO)
+        TELA.blit(go_text, go_text.get_rect(center=(LARGURA // 2, ALTURA // 2 - 80)))
+        font_small = pygame.font.SysFont(None, 40)
+        TELA.blit(font_small.render(f"Pontuação Final: {self.pontuacao}", True, PRETO),
+                  (LARGURA // 2 - 150, ALTURA // 2))
+        TELA.blit(font_small.render("Pressione ENTER para jogar novamente", True, PRETO),
+                  (LARGURA // 2 - 200, ALTURA // 2 + 60))
+
+# Loop principal
+def main():
+    clock = pygame.time.Clock()
+    game = Game()
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            if game.estado == MENU and event.type == pygame.KEYDOWN and event.key == pygame.K_RETURN:
+                game.reset_game()
+                game.estado = JOGANDO
+            elif game.estado == JOGANDO:
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_SPACE:
+                        game.personagem.pular()
+                    elif event.key == pygame.K_a:
+                        game.personagem.atacar()
+            elif game.estado == GAME_OVER and event.type == pygame.KEYDOWN and event.key == pygame.K_RETURN:
+                game.reset_game()
+                game.estado = JOGANDO
+
+        game.update()
+        if game.estado == MENU:
+            game.draw_menu()
+        elif game.estado == JOGANDO:
+            game.draw_game()
+        elif game.estado == GAME_OVER:
+            game.draw_game_over()
+        pygame.display.update()
+        clock.tick(60)
+
+if __name__ == "__main__":
+    main()
